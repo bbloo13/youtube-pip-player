@@ -4,7 +4,7 @@
 - 링크·검색으로 직접 만든 목록(재생 큐) 관리
 - 다른 위젯(youtube-music-widget)과 같은 다크 위젯 디자인
 """
-VERSION = "20261110"     # 날짜 버전 (youtube-music-widget 과 같은 방식)
+VERSION = "20261120"     # 날짜 버전 (youtube-music-widget 과 같은 방식)
 
 import ctypes
 import ctypes.wintypes as wt
@@ -108,7 +108,9 @@ class _PMC(ctypes.Structure):
                 ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
                 ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
                 ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+                ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t),
+                ("PrivateUsage", ctypes.c_size_t), ("PrivateWorkingSetSize", ctypes.c_size_t),
+                ("SharedCommitUsage", ctypes.c_uint64)]
 
 
 def mpv_window_rect(pid):
@@ -162,7 +164,8 @@ def proc_mem_mb(pid=None):
         ok = k32.K32GetProcessMemoryInfo(h, ctypes.byref(pmc), pmc.cb)
         if pid:
             k32.CloseHandle(h)
-        return round(pmc.WorkingSetSize / 1048576) if ok else None
+        # 작업 관리자의 '메모리'와 같은 값(개인 작업 집합). 그래픽 드라이버가 공유로 매핑한 영역은 빼야 실제 사용량에 가깝다
+        return round((pmc.PrivateWorkingSetSize or pmc.WorkingSetSize) / 1048576) if ok else None
     except Exception:
         return None
 
@@ -361,8 +364,15 @@ def wait_for_youtube_login(port, proc, stop=lambda: False, timeout=900, connect_
     return "timeout"
 
 
+# yt-dlp 는 영상+소리를 합칠 수 있는 형식을 고를 때 ffmpeg.exe 를 실행해 보는데, 서명이 없는 ffmpeg 는
+# Windows 가 매번 "이 앱의 일부가 차단되었습니다" 알림으로 막는다. 이 앱은 주소만 뽑으니 ffmpeg 가 필요 없어서
+# 일부러 없는 경로를 알려 줘 실행 자체를 못 하게 한다.
+NO_FFMPEG = os.path.join(os.path.dirname(PROFILE_ROOT), "no-ffmpeg").replace("\\", "/")
+
+
 def run_ytdlp(args, timeout=90, auth=False):
-    cmd = [YTDLP, "--no-warnings", "--encoding", "utf-8", *(auth_args() if auth else []), *args]
+    cmd = [YTDLP, "--no-warnings", "--encoding", "utf-8", "--ffmpeg-location", NO_FFMPEG,
+           *(auth_args() if auth else []), *args]
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                        errors="replace", timeout=timeout, creationflags=NOWIN,
                        env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
@@ -1879,9 +1889,11 @@ class App(tk.Tk):
         except OSError:
             pass
         extra = []
+        raw = [f"ffmpeg-location={NO_FFMPEG}"]      # ffmpeg 실행 차단 알림 방지 (위 NO_FFMPEG 설명 참고)
         if os.path.isdir(PROFILE):
             # 나중에 볼 영상 등 비공개 영상도 재생되도록 같은 로그인 사용
-            extra.append(f"--ytdl-raw-options=cookies-from-browser=edge:{PROFILE}")
+            raw.append(f"cookies-from-browser=edge:{PROFILE}")
+        extra.append("--ytdl-raw-options=" + ",".join(raw))
         try:                           # 화면 배율에 맞춘 최소 창 크기를 mpv 의 Lua 에 알려준다
             dpi = ctypes.windll.user32.GetDpiForSystem() / 96
         except Exception:
