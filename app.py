@@ -4,7 +4,7 @@
 - 링크·검색으로 직접 만든 목록(재생 큐) 관리
 - 다른 위젯(youtube-music-widget)과 같은 다크 위젯 디자인
 """
-VERSION = "20261120"     # 날짜 버전 (youtube-music-widget 과 같은 방식)
+VERSION = "20261121"     # 날짜 버전 (youtube-music-widget 과 같은 방식)
 
 import ctypes
 import ctypes.wintypes as wt
@@ -145,6 +145,29 @@ def mpv_window_rect(pid):
                 user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(old))
             except Exception:
                 pass
+
+
+def round_mpv_window(pid):
+    """mpv 창(테두리 없는 창)의 모서리를 Windows 11 기본 둥근 모서리로. 적용했으면 True"""
+    user32 = ctypes.windll.user32
+    found = []
+
+    @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+    def cb(hwnd, _lp):
+        p = wt.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(p))
+        if p.value == pid and user32.IsWindowVisible(hwnd):
+            found.append(hwnd)
+        return True
+    try:
+        user32.EnumWindows(cb, 0)
+        if not found:
+            return False
+        pref = ctypes.c_int(2)      # DWMWCP_ROUND
+        return ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            found[0], 33, ctypes.byref(pref), ctypes.sizeof(pref)) == 0
+    except Exception:
+        return False
 
 
 def proc_mem_mb(pid=None):
@@ -463,21 +486,25 @@ def fetch_channels(urls):
     return got
 
 
-def fetch_entries(query, auth=False, limit=50):
+def fetch_entries(query, auth=False, limit=50, skip_live=False):
     """링크(영상/재생목록/채널) 또는 검색어 -> [(제목, URL), ...]"""
     target = query if query.startswith(("http://", "https://")) else f"ytsearch10:{query}"
     out, err = run_ytdlp(
         ["--flat-playlist", "--playlist-end", str(limit),
-         "--print", "%(title)s\t%(webpage_url,url)s\t%(channel,uploader|)s", target],
+         "--print", "%(title)s\t%(webpage_url,url)s\t%(channel,uploader|)s\t%(live_status|)s", target],
         timeout=120, auth=auth)
     items = []
     for line in out.splitlines():
         if "\t" not in line:
             continue
         title, url = line.split("\t", 1)
-        chan = ""
+        chan, live = "", ""
         if "\t" in url:
             url, chan = url.split("\t", 1)
+        if "\t" in chan:
+            chan, live = chan.split("\t", 1)
+        if skip_live and live.strip() in ("is_live", "is_upcoming", "post_live"):
+            continue                    # 라이브 방송 / 예정된 방송은 목록에서 뺀다
         if url.startswith("http") and title.strip() not in ("[Private video]", "[Deleted video]"):
             items.append((title.strip() or url, url.strip()))
             vid, chan = video_id(url), clean_chan(chan)
@@ -1585,12 +1612,12 @@ class App(tk.Tk):
                 close_profile_edge()
                 self.login_opened = False
             try:
-                items = fetch_entries(target, auth=True, limit=200)
+                items = fetch_entries(target, auth=True, limit=200, skip_live=(view == "rec"))
             except Exception as e:
                 if "cookie" not in str(e).lower():
                     raise
                 close_profile_edge()   # 앱 전용 Edge 창이 쿠키를 잡고 있었다면 닫고 한 번 더
-                items = fetch_entries(target, auth=True, limit=200)
+                items = fetch_entries(target, auth=True, limit=200, skip_live=(view == "rec"))
         except Exception as e:
             err = str(e)
         self.after(0, lambda: self._remote_done(view, target, items, err, silent))
@@ -1997,6 +2024,8 @@ class App(tk.Tk):
                           ["set_property", "autofit", f"{w}x{h}"]])
         res = mpv_ipc_many(cmds)
         self.playing_items = items
+        if res[1] is not None and self.mpv_alive():
+            threading.Thread(target=self._round_mpv_when_ready, args=(self.proc.pid,), daemon=True).start()
         if res[1] is None:
             msg = "재생을 시작하지 못했어요 (mpv 연결 실패)"
         elif fast:
@@ -2050,6 +2079,13 @@ class App(tk.Tk):
                 self._idle_ticks = 0
         finally:
             self.after(2000, self.update_mem)
+
+    def _round_mpv_when_ready(self, pid):
+        """영상 창이 뜨면 바로 둥근 모서리를 적용 (뜨기를 최대 8초 기다림)"""
+        for _ in range(50):
+            if round_mpv_window(pid):
+                return
+            time.sleep(0.15)
 
     def remember_mpv_window(self):
         """사용자가 mpv 창을 옮기거나 크기를 바꾸면 기억해 두었다가 다음 영상 때 그 자리에서 연다"""

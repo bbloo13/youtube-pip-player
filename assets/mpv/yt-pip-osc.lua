@@ -51,6 +51,33 @@ local function text(x, y, str, size, color, anchor, clip_w)
         anchor or 4, f(x), f(y), f(size), color, clip, str)
 end
 
+-- 가운데에 숫자가 있는 둥근 화살표 (10초 뒤로/앞으로). dir=-1: 반시계(뒤로), 1: 시계(앞으로)
+local function seek_icon(cx, cy, r, s, color, dir, label)
+    local pts, n = {}, 28
+    local a0, sweep = (dir < 0) and 125 or 55, 290          -- 위쪽이 살짝 열린 고리
+    local lastx, lasty, prevx, prevy
+    for i = 0, n do
+        local ang = math.rad(a0 + (dir < 0 and 1 or -1) * sweep * i / n)
+        local x, y = cx + r * math.cos(ang), cy - r * math.sin(ang)
+        pts[#pts + 1] = (i == 0 and "m " or "l ") .. f(x) .. " " .. f(y)
+        prevx, prevy, lastx, lasty = lastx, lasty, x, y
+    end
+    local ring = string.format("{\\an7\\pos(0,0)\\bord%s\\shad0\\1a&HFF&\\3c&H%s&\\p1}%s{\\p0}",
+        f(1.7 * s), color, table.concat(pts, " "))
+    -- 끝 방향을 따라 작은 삼각형 화살촉
+    local dx, dy = lastx - prevx, lasty - prevy
+    local len = math.sqrt(dx * dx + dy * dy)
+    dx, dy = dx / len, dy / len
+    local hs = 4.6 * s
+    local tipx, tipy = lastx + dx * hs * 0.9, lasty + dy * hs * 0.9
+    local nx, ny = -dy, dx
+    local head = shape(string.format("m %s %s l %s %s %s %s",
+        f(tipx), f(tipy), f(lastx + nx * hs), f(lasty + ny * hs), f(lastx - nx * hs), f(lasty - ny * hs)), color)
+    local num = string.format("{\\an5\\pos(%s,%s)\\fnSegoe UI Semibold\\fs%s\\bord0\\shad0\\1c&H%s&}%s",
+        f(cx), f(cy + 0.5 * s), f(r * 1.0), color, label)
+    return ring, head, num
+end
+
 local function fmt(t)
     if not t or t < 0 then t = 0 end
     t = math.floor(t)
@@ -116,12 +143,12 @@ local function draw()
     local paused = mp.get_property_bool("pause")
     local function hov(name) return inside(st.reg[name], st.mx, st.my) and ACCENT or FG end
 
-    -- 이전
-    local x = cx - 44 * s
-    local c = hov("prev")
-    L[#L + 1] = shape(rrect(x - 7 * s, cy - 6 * s, x - 4.5 * s, cy + 6 * s, 1 * s), c)
-    L[#L + 1] = shape(string.format("m %s %s l %s %s %s %s", f(x + 6 * s), f(cy - 7 * s), f(x - 4 * s), f(cy), f(x + 6 * s), f(cy + 7 * s)), c)
-    st.reg.prev = { x1 = x - 14 * s, x2 = x + 14 * s, y1 = cy - 14 * s, y2 = cy + 14 * s }
+    -- 10초 뒤로
+    local x = cx - 56 * s
+    local c = hov("back")
+    local a, b, n = seek_icon(x, cy, 12 * s, s, c, -1, "10")
+    L[#L + 1] = a; L[#L + 1] = b; L[#L + 1] = n
+    st.reg.back = { x1 = x - 18 * s, x2 = x + 18 * s, y1 = cy - 18 * s, y2 = cy + 18 * s }
     -- 재생 / 일시정지
     c = hov("play")
     if paused then
@@ -131,12 +158,12 @@ local function draw()
         L[#L + 1] = shape(rrect(cx + 2 * s, cy - 7 * s, cx + 6 * s, cy + 7 * s, 1.5 * s), c)
     end
     st.reg.play = { x1 = cx - 16 * s, x2 = cx + 16 * s, y1 = cy - 14 * s, y2 = cy + 14 * s }
-    -- 다음
-    x = cx + 44 * s
-    c = hov("next")
-    L[#L + 1] = shape(rrect(x + 4.5 * s, cy - 6 * s, x + 7 * s, cy + 6 * s, 1 * s), c)
-    L[#L + 1] = shape(string.format("m %s %s l %s %s %s %s", f(x - 6 * s), f(cy - 7 * s), f(x + 4 * s), f(cy), f(x - 6 * s), f(cy + 7 * s)), c)
-    st.reg.next = { x1 = x - 14 * s, x2 = x + 14 * s, y1 = cy - 14 * s, y2 = cy + 14 * s }
+    -- 10초 앞으로
+    x = cx + 56 * s
+    c = hov("fwd")
+    a, b, n = seek_icon(x, cy, 12 * s, s, c, 1, "10")
+    L[#L + 1] = a; L[#L + 1] = b; L[#L + 1] = n
+    st.reg.fwd = { x1 = x - 18 * s, x2 = x + 18 * s, y1 = cy - 18 * s, y2 = cy + 18 * s }
 
     -- 볼륨 (74px x 3px, 8px 점)
     local vw = 74 * s
@@ -190,10 +217,10 @@ mp.add_forced_key_binding("MBTN_LEFT", "yt_click", function(e)
             st.drag = "seek"; apply_drag(false)
         elseif inside(st.reg.vol, pos.x, pos.y) and st.visible then
             st.drag = "vol"; apply_drag(false)
-        elseif inside(st.reg.prev, pos.x, pos.y) and st.visible then
-            mp.commandv("playlist-prev")
-        elseif inside(st.reg.next, pos.x, pos.y) and st.visible then
-            mp.commandv("playlist-next")
+        elseif inside(st.reg.back, pos.x, pos.y) and st.visible then
+            mp.commandv("seek", "-10")
+        elseif inside(st.reg.fwd, pos.x, pos.y) and st.visible then
+            mp.commandv("seek", "10")
         elseif inside(st.reg.play, pos.x, pos.y) and st.visible then
             mp.commandv("cycle", "pause")
         elseif inside(st.reg.close, pos.x, pos.y) and st.visible then
