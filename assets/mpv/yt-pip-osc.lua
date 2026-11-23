@@ -14,6 +14,11 @@ local WHITE  = "FFFFFF"
 local overlay = mp.create_osd_overlay("ass-events")
 local st = { visible = false, last = 0, drag = nil, mx = -1, my = -1, reg = {} }
 
+-- 컨트롤 패널 영역은 mpv 의 "창 끌기"에서 빼 둔다. 안 그러면 볼륨/재생바를 누른 채 끌 때 창이 같이 끌려 다닌다.
+-- (mpv 기본 OSC 도 같은 방식: 영역을 섹션에 등록하되 allow-vo-dragging 플래그를 주지 않는다)
+mp.set_key_bindings({ { "f24", function() end } }, "yt_panel", "force")
+mp.enable_key_bindings("yt_panel")
+
 local function f(n) return string.format("%.1f", n) end
 
 local function mouse_pos()
@@ -94,7 +99,7 @@ local function draw()
     local w, h = mp.get_osd_size()
     if not w or w == 0 then return end
     overlay.res_x, overlay.res_y = w, h
-    if not st.visible then overlay:remove() return end
+    if not st.visible then overlay:remove() mp.set_mouse_area(0, 0, 0, 0, "yt_panel") return end
 
     local s = math.max(1.0, math.min(1.6, w / 760))
     local m = 8 * s
@@ -107,6 +112,7 @@ local function draw()
 
     -- 패널 (rgba(20,20,24,0.55) 느낌)
     L[#L + 1] = shape(rrect(px1, py1, px2, py2, 14 * s), PANEL, "40")
+    mp.set_mouse_area(px1, py1, px2, py2, "yt_panel")
 
     -- 위쪽 제목줄 (기본 윈도우 제목줄 대신): 제목 + 닫기 버튼, 끌면 창 이동
     local th = 38 * s

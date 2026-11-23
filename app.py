@@ -4,7 +4,7 @@
 - 링크·검색으로 직접 만든 목록(재생 큐) 관리
 - 다른 위젯(youtube-music-widget)과 같은 다크 위젯 디자인
 """
-VERSION = "20261121"     # 날짜 버전 (youtube-music-widget 과 같은 방식)
+VERSION = "20261123"     # 날짜 버전 (youtube-music-widget 과 같은 방식)
 
 import ctypes
 import ctypes.wintypes as wt
